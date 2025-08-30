@@ -1,0 +1,13 @@
+/* Custom styles to complement Tailwind */
+#unfollowers a {
+    color: #3b82f6;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+#unfollowers a:hover {
+    color: #1d4ed8;
+}
+#app {
+    max-height: 600px;
+    overflow-y: auto;
+}
