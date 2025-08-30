@@ -13,6 +13,8 @@ const headerEl = document.getElementById('header');
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
 const filterEl = document.getElementById('filter');
+const toggleHistoryBtnEl = document.getElementById('toggle-history');
+const historyEl = document.getElementById('history');
 
 // Message listener for page source
 browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -53,8 +55,9 @@ browserAPI.tabs.query({ active: true, currentWindow: true }, (tabs) => {
 // Initialize the app
 function init(loggedUser) {
     unfollowers = JSON.parse(localStorage.getItem(`IUF-unfollowers[${loggedUser.username}]`)) || [];
+    followers = JSON.parse(localStorage.getItem(`IUF-followers[${loggedUser.username}]`)) || [];
     getUnfollowersBtnEl.classList.remove('hidden');
-    
+
     if (unfollowers.length) {
         headerEl.textContent = `Total unfollowers: ${unfollowers.length}`;
         renderUnfollowers(unfollowers);
@@ -62,11 +65,19 @@ function init(loggedUser) {
 
     getUnfollowersBtnEl.addEventListener('click', () => fetchUnfollowers(loggedUser));
     filterEl.addEventListener('input', () => {
-        const filtered = unfollowers.filter(user => 
+        const filtered = unfollowers.filter(user =>
             user.username.toLowerCase().includes(filterEl.value.toLowerCase()) ||
             user.name.toLowerCase().includes(filterEl.value.toLowerCase())
         );
         renderUnfollowers(filtered);
+    });
+
+    toggleHistoryBtnEl.addEventListener('click', () => {
+        historyEl.classList.toggle('hidden');
+        toggleHistoryBtnEl.textContent = historyEl.classList.contains('hidden') ? 'Show History' : 'Hide History';
+        if (!historyEl.classList.contains('hidden') && historyEl.innerHTML === '') {
+            renderHistory(loggedUser.username);
+        }
     });
 }
 
@@ -92,6 +103,17 @@ async function fetchUnfollowers(user) {
 
 // Get followers
 async function getFollowers(user, after = null) {
+    const cacheKey = `IUF-followers[${user.username}]`;
+    const cacheTimestampKey = `IUF-followers-timestamp[${user.username}]`;
+    const cachedFollowers = JSON.parse(localStorage.getItem(cacheKey));
+    const cachedTimestamp = localStorage.getItem(cacheTimestampKey);
+    const cacheAge = cachedTimestamp ? (Date.now() - parseInt(cachedTimestamp)) / (1000 * 60 * 60) : Infinity;
+
+    if (cachedFollowers && cacheAge < 24) {
+        followers = cachedFollowers;
+        return;
+    }
+
     const response = await axios.get(`https://www.instagram.com/graphql/query/?query_hash=c76146de99bb02f6415203be841dd25a&variables=${encodeURIComponent(JSON.stringify({
         id: user.id,
         include_reel: false,
@@ -99,12 +121,15 @@ async function getFollowers(user, after = null) {
         first: 100,
         after
     }))}`);
-    
+
     followers.push(...response.data.data.user.edge_followed_by.edges.map(user => Number(user.node.id)));
     if (response.data.data.user.edge_followed_by.page_info.has_next_page) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         await getFollowers(user, response.data.data.user.edge_followed_by.page_info.end_cursor);
     }
+
+    localStorage.setItem(cacheKey, JSON.stringify(followers));
+    localStorage.setItem(cacheTimestampKey, Date.now().toString());
 }
 
 // Get followings
@@ -116,7 +141,7 @@ async function getFollowings(user, after = null) {
         first: 100,
         after
     }))}`);
-    
+
     followings.push(...response.data.data.user.edge_follow.edges.map(user => ({
         id: Number(user.node.id),
         name: user.node.full_name,
@@ -128,12 +153,33 @@ async function getFollowings(user, after = null) {
     }
 }
 
-// Set unfollowers
+// Set unfollowers and update history
 function setUnfollowers(username) {
+    const previousUnfollowers = JSON.parse(localStorage.getItem(`IUF-unfollowers[${username}]`)) || [];
+    const history = JSON.parse(localStorage.getItem(`IUF-unfollower-history[${username}]`)) || [];
+    const currentDate = new Date().toISOString();
+
     unfollowers = followings.filter(following => !followers.includes(following.id));
+
+    // Identify new unfollowers
+    const newUnfollowers = unfollowers.filter(user => !previousUnfollowers.some(prev => prev.id === user.id));
+    newUnfollowers.forEach(user => {
+        history.push({
+            id: user.id,
+            name: user.name,
+            username: user.username,
+            date: currentDate
+        });
+    });
+
     localStorage.setItem(`IUF-unfollowers[${username}]`, JSON.stringify(unfollowers));
+    localStorage.setItem(`IUF-unfollower-history[${username}]`, JSON.stringify(history));
     headerEl.textContent = `Total unfollowers: ${unfollowers.length}`;
     renderUnfollowers(unfollowers);
+
+    if (newUnfollowers.length > 0) {
+        showError(`${newUnfollowers.length} new unfollower(s) detected!`);
+    }
 }
 
 // Render unfollowers
@@ -147,6 +193,22 @@ function renderUnfollowers(users) {
     });
 }
 
+// Render unfollower history
+function renderHistory(username) {
+    const history = JSON.parse(localStorage.getItem(`IUF-unfollower-history[${username}]`)) || [];
+    historyEl.innerHTML = '';
+    if (history.length === 0) {
+        historyEl.innerHTML = '<p class="text-gray-500">No unfollower history available.</p>';
+        return;
+    }
+    history.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach((user, index) => {
+        const p = document.createElement('p');
+        p.className = 'text-sm history-item';
+        p.innerHTML = `${index + 1}. <a href="https://instagram.com/${user.username}/" target="_blank">${user.name || user.username} (@${user.username})</a> - ${new Date(user.date).toLocaleString()}`;
+        historyEl.appendChild(p);
+    });
+}
+
 // Utility functions
 function showLoading(show) {
     loadingEl.classList.toggle('hidden', !show);
@@ -156,10 +218,12 @@ function showLoading(show) {
 function showError(message) {
     errorEl.textContent = message;
     errorEl.classList.remove('hidden');
+    setTimeout(() => errorEl.classList.add('hidden'), 5000);
 }
 
 function resetState() {
     errorEl.classList.add('hidden');
     unfollowersEl.innerHTML = '';
+    historyEl.innerHTML = '';
     headerEl.textContent = 'Fetching unfollowers... Please wait!';
 }

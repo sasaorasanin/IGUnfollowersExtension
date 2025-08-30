@@ -1,13 +1,17 @@
 /* Custom styles to complement Tailwind */
-#unfollowers a {
+#unfollowers a, #history a {
     color: #3b82f6;
     text-decoration: none;
     transition: color 0.2s;
 }
-#unfollowers a:hover {
+#unfollowers a:hover, #history a:hover {
     color: #1d4ed8;
 }
 #app {
     max-height: 600px;
     overflow-y: auto;
+}
+.history-item {
+    border-left: 4px solid #e5e7eb;
+    padding-left: 8px;
 }
